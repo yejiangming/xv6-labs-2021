@@ -80,6 +80,32 @@ sys_sleep(void)
 int
 sys_pgaccess(void)
 {
+  uint64 start_addr;
+  argaddr(0, &start_addr);
+
+  int num_pages;
+  argint(1, &num_pages);
+
+  int mask_bits = 0;
+
+  uint64 mask_addr;
+  argaddr(2, &mask_addr); 
+
+  struct proc *p = myproc();
+  for (int i = 0; i < num_pages; i++) {
+    pte_t *pte = walk(p->pagetable, start_addr + i * PGSIZE, 0);
+    if (pte == 0) {
+      return -1; // Page not found
+    }
+    if ((*pte & PTE_A) != 0) {
+      mask_bits |= (1 << i); // Set the bit for this page
+      *pte &= ~PTE_A; // Clear the accessed bit
+    }
+  }
+  
+  // Copy the mask bits to user space
+  copyout(p->pagetable, mask_addr, (char *)&mask_bits, sizeof(mask_bits));
+
   // lab pgtbl: your code here.
   return 0;
 }
