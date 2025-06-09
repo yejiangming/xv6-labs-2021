@@ -97,6 +97,32 @@ walk(pagetable_t pagetable, uint64 va, int alloc)
   return &pagetable[PX(0, va)];
 }
 
+void vmprefixprint(int level) {
+    printf("..");
+
+    for (int i = 0; i < level-1; i++) {
+        printf(" ..");
+    }
+}
+
+// level 1 2 3
+void vmprint(pagetable_t pagetable, int level)
+{
+  if (level == 1) {
+    printf("page table %p\n", pagetable);
+  }
+  for (int i = 0; i < 512; i++) {
+    pte_t pte = pagetable[i];
+    if ((pte & PTE_V) == 0)
+      continue;
+    vmprefixprint(level);
+    printf("%d: pte %p pa %p\n", i, pte, PTE2PA(pte));
+    if (level < 3) {
+      vmprint((pagetable_t)PTE2PA(pte), level + 1);
+    }
+  }
+}
+
 // Look up a virtual address, return the physical address,
 // or 0 if not mapped.
 // Can only be used to look up user pages.
