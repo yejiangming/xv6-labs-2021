@@ -44,7 +44,7 @@ kvmmake(void)
   kvmmap(kpgtbl, TRAMPOLINE, (uint64)trampoline, PGSIZE, PTE_R | PTE_X);
 
   // map kernel stacks
-  proc_mapstacks(kpgtbl);
+  // proc_mapstacks(kpgtbl);
   
   return kpgtbl;
 }
@@ -212,6 +212,17 @@ uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
   }
 }
 
+
+void cp_user_pagetable(pagetable_t pagetable, pagetable_t kernel_pagetable, uint64 start_va, uint64 end_va){
+
+  for (uint64 va = PGROUNDUP(start_va); va < end_va; va += PGSIZE) {
+    pte_t *pte = walk(pagetable, va, 0);
+
+    pte_t *k_pte = walk(kernel_pagetable, va, 1);
+    *k_pte = (*pte & ~PTE_U);
+  }
+
+}
 // create an empty user page table.
 // returns 0 if out of memory.
 pagetable_t
@@ -229,7 +240,7 @@ uvmcreate()
 // for the very first process.
 // sz must be less than a page.
 void
-uvminit(pagetable_t pagetable, uchar *src, uint sz)
+uvminit(pagetable_t pagetable, pagetable_t kernel_pagetable, uchar *src, uint sz)
 {
   char *mem;
 
@@ -239,6 +250,8 @@ uvminit(pagetable_t pagetable, uchar *src, uint sz)
   memset(mem, 0, PGSIZE);
   mappages(pagetable, 0, PGSIZE, (uint64)mem, PTE_W|PTE_R|PTE_X|PTE_U);
   memmove(mem, src, sz);
+
+  mappages(kernel_pagetable, 0, PGSIZE, (uint64)mem, PTE_W|PTE_R|PTE_X);
 }
 
 // Allocate PTEs and physical memory to grow process from oldsz to
@@ -397,6 +410,8 @@ copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
 int
 copyin(pagetable_t pagetable, char *dst, uint64 srcva, uint64 len)
 {
+  return copyin_new(pagetable, dst, srcva, len);
+  
   uint64 n, va0, pa0;
 
   while(len > 0){
@@ -423,6 +438,8 @@ copyin(pagetable_t pagetable, char *dst, uint64 srcva, uint64 len)
 int
 copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
 {
+
+  return copyinstr_new(pagetable, dst, srcva, max);
   uint64 n, va0, pa0;
   int got_null = 0;
 

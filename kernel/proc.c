@@ -20,6 +20,10 @@ static void freeproc(struct proc *p);
 
 extern char trampoline[]; // trampoline.S
 
+extern pagetable_t kernel_pagetable;
+
+extern char etext[];  // kernel.ld sets this to end of kernel code.
+
 // helps ensure that wakeups of wait()ing
 // parents are not lost. helps obey the
 // memory model when using p->parent.
@@ -135,6 +139,9 @@ found:
     return 0;
   }
 
+  // 映射内核代码
+  p->kernel_pagetable = proc_kernel_pagetable(p);
+
   // Set up new context to start executing at forkret,
   // which returns to user space.
   memset(&p->context, 0, sizeof(p->context));
@@ -155,6 +162,10 @@ freeproc(struct proc *p)
   p->trapframe = 0;
   if(p->pagetable)
     proc_freepagetable(p->pagetable, p->sz);
+  
+  if(p->kernel_pagetable)
+    proc_free_kernel_pagetable(p, p->kernel_pagetable);
+  
   p->pagetable = 0;
   p->sz = 0;
   p->pid = 0;
@@ -198,9 +209,17 @@ proc_pagetable(struct proc *p)
 
   // map USYSCALL page 
   char* pa = kalloc();
+  if (pa == 0) {
+    uvmunmap(pagetable, TRAPFRAME, 1, 0);
+    uvmunmap(pagetable, TRAMPOLINE, 1, 0);
+    uvmfree(pagetable, 0);
+    return 0;
+  }
+
   if(mappages(pagetable, USYSCALL, PGSIZE, (uint64)pa, PTE_R|PTE_U) < 0){
     uvmunmap(pagetable, TRAPFRAME, 1, 0);
     uvmunmap(pagetable, TRAMPOLINE, 1, 0);
+    kfree((void*) pa);
     uvmfree(pagetable, 0);
     return 0;
   }
@@ -212,6 +231,46 @@ proc_pagetable(struct proc *p)
   return pagetable;
 }
 
+
+// create a kernel page table for a given process,
+// alloc a page for the kernel stack,
+pagetable_t
+proc_kernel_pagetable(struct proc *p)
+{
+  pagetable_t kpgtbl;
+
+  kpgtbl = (pagetable_t) kalloc();
+  memset(kpgtbl, 0, PGSIZE);
+
+  // uart registers
+  kvmmap(kpgtbl, UART0, UART0, PGSIZE, PTE_R | PTE_W);
+
+  // virtio mmio disk interface
+  kvmmap(kpgtbl, VIRTIO0, VIRTIO0, PGSIZE, PTE_R | PTE_W);
+
+  // PLIC
+  kvmmap(kpgtbl, PLIC, PLIC, 0x400000, PTE_R | PTE_W);
+
+  // map kernel text executable and read-only.
+  kvmmap(kpgtbl, KERNBASE, KERNBASE, (uint64)etext-KERNBASE, PTE_R | PTE_X);
+
+  // map kernel data and the physical RAM we'll make use of.
+  kvmmap(kpgtbl, (uint64)etext, (uint64)etext, PHYSTOP-(uint64)etext, PTE_R | PTE_W);
+
+  // map the trampoline for trap entry/exit to
+  // the highest virtual address in the kernel.
+  kvmmap(kpgtbl, TRAMPOLINE, (uint64)trampoline, PGSIZE, PTE_R | PTE_X);
+
+
+  // 分配物理页，映射进程的内核栈
+  char *pa = kalloc();
+  if(pa == 0)
+    panic("kalloc");
+
+  kvmmap(kpgtbl, KSTACK((int) (p - proc)), (uint64)pa, PGSIZE, PTE_R | PTE_W);
+  return kpgtbl;
+}
+
 // Free a process's page table, and free the
 // physical memory it refers to.
 void
@@ -221,6 +280,45 @@ proc_freepagetable(pagetable_t pagetable, uint64 sz)
   uvmunmap(pagetable, TRAPFRAME, 1, 0);
   uvmunmap(pagetable, USYSCALL, 1, 1);
   uvmfree(pagetable, sz);
+}
+
+void proc_free_kernel_pagetable(struct proc*p, pagetable_t kernel_pagetable) {
+  // printf("proc_free_kernel_pagetable: freeing pagetable:%p\n", kernel_pagetable);
+  // free kernel stack
+  pte_t *pte = walk(kernel_pagetable, KSTACK((int) (p - proc)), 0);
+  kfree((void*)PTE2PA(*pte));
+
+  // free kernel page table
+  proc_free_kernel_pagetable_only(kernel_pagetable, 1);
+
+}
+
+void
+proc_free_kernel_pagetable_only(pagetable_t pagetable, int level)
+{
+  if (level >= 4) {
+    return;
+  }
+
+  if (level == 3) {
+    // Free the kernel page table.
+    kfree((void*)pagetable);
+    return;
+  }
+
+  for (int i = 0; i < 512; i++) {
+    if ((pagetable[i] & PTE_V) == 0)
+      continue;
+    
+    if (level == 2) {
+      kfree((void*)PTE2PA(pagetable[i]));
+    } else {
+      proc_free_kernel_pagetable_only((pagetable_t)PTE2PA(pagetable[i]), level + 1);
+    }
+    
+  }
+  // Free the page table itself.
+  kfree((void*)pagetable); 
 }
 
 // a user program that calls exec("/init")
@@ -246,7 +344,7 @@ userinit(void)
   
   // allocate one user page and copy init's instructions
   // and data into it.
-  uvminit(p->pagetable, initcode, sizeof(initcode));
+  uvminit(p->pagetable, p->kernel_pagetable, initcode, sizeof(initcode));
   p->sz = PGSIZE;
 
   // prepare for the very first "return" from kernel to user.
@@ -270,12 +368,24 @@ growproc(int n)
   struct proc *p = myproc();
 
   sz = p->sz;
+  uint oldsz = sz;
   if(n > 0){
+
+    if (sz + n >= PLIC) {
+      // Prevent growing beyond the PLIC region.
+      return -1;
+    }
     if((sz = uvmalloc(p->pagetable, sz, sz + n)) == 0) {
       return -1;
     }
+
+    cp_user_pagetable(p->pagetable, p->kernel_pagetable, oldsz, sz);
   } else if(n < 0){
+
     sz = uvmdealloc(p->pagetable, sz, sz + n);
+
+    int npages = (PGROUNDUP(oldsz) - PGROUNDUP(oldsz)) / PGSIZE;
+    uvmunmap(p->kernel_pagetable, PGROUNDUP(oldsz+n), npages, 0);
   }
   p->sz = sz;
   return 0;
@@ -302,6 +412,8 @@ fork(void)
     return -1;
   }
   np->sz = p->sz;
+
+  cp_user_pagetable(np->pagetable, np->kernel_pagetable, 0, np->sz);
 
   // copy saved user registers.
   *(np->trapframe) = *(p->trapframe);
@@ -467,11 +579,18 @@ scheduler(void)
         // before jumping back to us.
         p->state = RUNNING;
         c->proc = p;
+
+        w_satp(MAKE_SATP(p->kernel_pagetable));
+        sfence_vma();
+
         swtch(&c->context, &p->context);
 
         // Process is done running for now.
         // It should have changed its p->state before coming back.
         c->proc = 0;
+
+        w_satp(MAKE_SATP(kernel_pagetable));
+        sfence_vma();
       }
       release(&p->lock);
     }

@@ -34,7 +34,6 @@ exec(char *path, char **argv)
     goto bad;
   if(elf.magic != ELF_MAGIC)
     goto bad;
-
   if((pagetable = proc_pagetable(p)) == 0)
     goto bad;
 
@@ -115,6 +114,12 @@ exec(char *path, char **argv)
   p->trapframe->epc = elf.entry;  // initial program counter = main
   p->trapframe->sp = sp; // initial stack pointer
   proc_freepagetable(oldpagetable, oldsz);
+
+  // 清空 kernel pagetable 中原来的用户页表映射
+  uvmunmap(p->kernel_pagetable, 0, PGROUNDUP(oldsz)/PGSIZE, 0);
+
+  // 将 pagetable 中的用户态内容复制到 kernel pagetable 
+  cp_user_pagetable(p->pagetable, p->kernel_pagetable, 0, sz);
 
   if (p->pid == 1) {
     vmprint(p->pagetable, 1);
