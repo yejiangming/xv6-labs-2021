@@ -1,0 +1,79 @@
+##### Q1
+Which registers contain arguments to functions? For example, which register holds 13 in main's call to printf?
+a0, a1, a2 存调用 printf 的参数, 13 存在 a2 中
+
+##### Q2
+Where is the call to function f in the assembly code for main? Where is the call to g? (Hint: the compiler may inline functions.)
+如果使用 -O0 编译，可以看到 main 对 f 的调用，f 对 g 的调用
+如果使用 -O 编译，汇编中不存在对 f 的调用，被优化为直接向 a1 中载入 12
+```
+26: 45b1 li a1,12
+```
+
+##### Q3
+At what address is the function printf located?
+0x630
+
+```
+34: 600080e7 jalr 1536(ra) # 630 <printf>
+exit(0);
+38: 4501 li a0,0
+```
+
+##### Q4
+What value is in the register ra just after the jalr to printf in main?
+jalr 的下一条指令地址 0x38
+
+##### Q5
+Run the following code.
+
+	unsigned int i = 0x00646c72;
+	printf("H%x Wo%s", 57616, &i);
+      
+
+57616 = 0xe110
+按小端序 
+0x00646c72 从低地址到高地址的字节是 0x72(r) 0x6c(l) 0x64(d) 0x00
+
+What is the output? [Here's an ASCII table](http://web.cs.mun.ca/~michael/c/ascii-table.html) that maps bytes to characters.
+
+The output depends on that fact that the RISC-V is little-endian. If the RISC-V were instead big-endian what would you set `i` to in order to yield the same output? Would you need to change `57616` to a different value?
+
+如果是大端序 57616 不需要改变 
+i 改变为 0x726c6400
+
+##### Q6
+In the following code, what is going to be printed after `'y='`? (note: the answer is not a specific value.) Why does this happen?
+
+```
+printf("x=%d y=%d", 3);
+```
+
+
+```
+void
+printf(const char *fmt, ...)
+{
+ 612:	711d                	addi	sp,sp,-96
+ 614:	ec06                	sd	ra,24(sp)
+ 616:	e822                	sd	s0,16(sp)
+ 618:	1000                	addi	s0,sp,32
+ 61a:	e40c                	sd	a1,8(s0)
+ 61c:	e810                	sd	a2,16(s0)
+ 61e:	ec14                	sd	a3,24(s0)
+ 620:	f018                	sd	a4,32(s0)
+ 622:	f41c                	sd	a5,40(s0)
+ 624:	03043823          	sd	a6,48(s0)
+ 628:	03143c23          	sd	a7,56(s0)
+  va_list ap;
+
+  va_start(ap, fmt);
+ 62c:	00840613          	addi	a2,s0,8
+ 630:	fec43423          	sd	a2,-24(s0)
+  vprintf(1, fmt, ap);
+ 634:	85aa                	mv	a1,a0
+ 636:	4505                	li	a0,1
+ 638:	00000097          	auipc	ra,0x0
+ 63c:	dce080e7          	jalr	-562(ra) # 406 <vprintf>
+}
+```
