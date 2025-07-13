@@ -118,6 +118,10 @@ allocproc(void)
 
 found:
   p->pid = allocpid();
+  p->alarm_ticks = 0;
+  p->alarm_handler_addr = 0;
+  p->accumulated_ticks = 0;
+  p->alarm_handling = 0;
   p->state = USED;
 
   // Allocate a trapframe page.
