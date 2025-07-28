@@ -303,7 +303,7 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
   pte_t *pte;
   uint64 pa, i;
   uint flags;
-  char *mem;
+  // char *mem;
 
   for(i = 0; i < sz; i += PGSIZE){
     if((pte = walk(old, i, 0)) == 0)
@@ -311,18 +311,23 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
     if((*pte & PTE_V) == 0)
       panic("uvmcopy: page not present");
     pa = PTE2PA(*pte);
+    if (*pte & PTE_W) {
+      *pte &= ~PTE_W; // clear write bit
+      *pte |= PTE_COW; // set copy-on-write bit
+    }
     flags = PTE_FLAGS(*pte);
-    if((mem = kalloc()) == 0)
-      goto err;
-    memmove(mem, (char*)pa, PGSIZE);
-    if(mappages(new, i, PGSIZE, (uint64)mem, flags) != 0){
-      kfree(mem);
+    // if((mem = kalloc()) == 0)
+    //   goto err;
+    // memmove(mem, (char*)pa, PGSIZE);
+    if(mappages(new, i, PGSIZE, (uint64)pa, flags) != 0){
+      // kfree(mem);
       goto err;
     }
+    increment_ref(pa); // increment reference count
   }
   return 0;
 
- err:
+ err:  
   uvmunmap(new, 0, i / PGSIZE, 1);
   return -1;
 }
@@ -350,9 +355,36 @@ copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
 
   while(len > 0){
     va0 = PGROUNDDOWN(dstva);
-    pa0 = walkaddr(pagetable, va0);
-    if(pa0 == 0)
+
+    if (va0 >= MAXVA) {
+      return -1; // invalid address
+    }
+
+    pte_t* pte = walk(pagetable, va0, 0);
+    if(pte == 0 || (*pte & PTE_V) == 0 || (*pte & PTE_U) == 0) {
       return -1;
+    }
+
+    if (*pte & PTE_COW) {
+      uint64 pa = PTE2PA(*pte); // get the physical address
+      char* newpa = kalloc();
+      if (newpa == 0) {
+        return -1;
+      }
+      memmove((void*)newpa, (void*)pa, PGSIZE);
+      uint flags = PTE_FLAGS(*pte);
+      flags = flags & ~PTE_COW; // clear COW bit
+      flags = flags | PTE_W; // set write bit
+      *pte = PA2PTE(newpa) | flags;
+      kfree((void*)pa); // free the old page
+      pa0 = (uint64)newpa;
+    } else {
+      pa0 = PTE2PA(*pte); // get the physical address
+    }
+    
+    // pa0 = walkaddr(pagetable, va0);
+    // if(pa0 == 0)
+    //   return -1;
     n = PGSIZE - (dstva - va0);
     if(n > len)
       n = len;

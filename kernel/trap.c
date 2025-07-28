@@ -68,9 +68,37 @@ usertrap(void)
   } else if((which_dev = devintr()) != 0){
     // ok
   } else {
-    printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);
-    printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
-    p->killed = 1;
+    // printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);
+    // printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
+
+    // page fault
+    if ((r_scause() == 12 || r_scause() == 13 || r_scause() == 15)
+        && (r_stval() < MAXVA)) 
+    {
+      pte_t *pte = walk(myproc()->pagetable, r_stval(), 0);
+      // printf("pte:%p\n", *pte);
+      if (pte == 0 || (*pte & PTE_V) == 0 || (*pte & PTE_U) == 0) {
+        p->killed = 1;
+        exit(-1);
+        // panic("usertrap: address not mapped");
+      }
+      if (*pte & PTE_COW) {
+        uint64 pa = PTE2PA(*pte); // get the physical address
+        char* newpa = kalloc();
+        if (newpa == 0) {
+          p->killed = 1;
+          exit(-1);
+        }
+        memmove((void*)newpa, (void*)pa, PGSIZE);
+        uint flags = PTE_FLAGS(*pte);
+        flags = flags & ~PTE_COW; // clear COW bit
+        flags = flags | PTE_W; // set write bit
+        *pte = PA2PTE(newpa) | flags;
+        kfree((void*)pa); // free the old page
+      }
+    } else {
+      p->killed = 1;
+    }
   }
 
   if(p->killed)
