@@ -16,7 +16,16 @@ struct entry {
 struct entry *table[NBUCKET];
 int keys[NKEYS];
 int nthread = 1;
+pthread_mutex_t lock[NBUCKET];
 
+void init_lock() {
+  for (int i = 0; i < NBUCKET; i++) {
+    if (pthread_mutex_init(&lock[i], NULL) != 0) {
+      fprintf(stderr, "mutex init failed\n");
+      exit(-1);
+    }
+  }
+}
 
 double
 now()
@@ -78,7 +87,10 @@ put_thread(void *xa)
   int b = NKEYS/nthread;
 
   for (int i = 0; i < b; i++) {
+    int bucket_number = (keys[b*n + i]) % NBUCKET;
+    pthread_mutex_lock(&lock[bucket_number]);
     put(keys[b*n + i], n);
+    pthread_mutex_unlock(&lock[bucket_number]);
   }
 
   return NULL;
@@ -117,6 +129,9 @@ main(int argc, char *argv[])
   for (int i = 0; i < NKEYS; i++) {
     keys[i] = random();
   }
+
+  // init lock
+  init_lock();
 
   //
   // first the puts

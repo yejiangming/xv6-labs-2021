@@ -1,0 +1,5 @@
+thread1 put 发现 key 不存在, new entry1, entry1->next 指向 key 对应的链表头(e->next = n;)
+线程切换
+thread2 put 发现 key 不存在, new entry2, entry2->next 指向相同的链表头(e->next = n;)
+thread2 将链表头更新为 entry2 (*p = e;)
+thread1 将链表头更新为 entry1 (*p = e;)
