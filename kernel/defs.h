@@ -97,6 +97,7 @@ void            procinit(void);
 void            scheduler(void) __attribute__((noreturn));
 void            sched(void);
 void            sleep(void*, struct spinlock*);
+void            broken_sleep(void*);
 void            userinit(void);
 int             wait(uint64);
 void            wakeup(void*);
@@ -150,6 +151,7 @@ void            usertrapret(void);
 void            uartinit(void);
 void            uartintr(void);
 void            uartputc(int);
+void            uartwrite(char buf[], int n);
 void            uartputc_sync(int);
 int             uartgetc(void);
 

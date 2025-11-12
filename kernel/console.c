@@ -58,16 +58,32 @@ struct {
 int
 consolewrite(int user_src, uint64 src, int n)
 {
-  int i;
 
-  for(i = 0; i < n; i++){
+  const int MAX_BATCH_SIZE = 1;
+  char buf[MAX_BATCH_SIZE];
+  int batch_num = n / MAX_BATCH_SIZE;
+  int remain = n % MAX_BATCH_SIZE;
+  if (remain > 0)
+    batch_num += 1;
+
+  for (int batch = 0; batch < batch_num; batch++) {
+    int i = 0;
     char c;
-    if(either_copyin(&c, user_src, src+i, 1) == -1)
-      break;
-    uartputc(c);
+    int to_write = 0;
+    if (n - batch*MAX_BATCH_SIZE >= MAX_BATCH_SIZE) {
+      to_write = MAX_BATCH_SIZE;
+    } else {
+      to_write = remain;
+    }
+    for (i = 0; i < to_write; i++) {
+      if (either_copyin(&c, user_src, src + batch*MAX_BATCH_SIZE + i, 1) == -1)
+        break;
+      buf[i] = c;
+    }
+    uartwrite(buf, to_write);
   }
 
-  return i;
+  return n;
 }
 
 //
